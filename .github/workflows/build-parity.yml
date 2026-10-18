@@ -1,0 +1,80 @@
+name: build-parity
+
+on:
+  workflow_dispatch:
+    inputs:
+      list:
+        description: A list file under lists/
+        default: lists/debug.json
+      offset:
+        description: Skip the first N pull requests of the list
+        default: "0"
+      limit:
+        description: Run at most N pull requests (a run takes at most 256)
+        default: "256"
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      prs: ${{ steps.list.outputs.prs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: List the pull requests
+        id: list
+        env:
+          LIST: ${{ inputs.list }}
+          OFFSET: ${{ inputs.offset }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          [[ "$OFFSET" =~ ^[0-9]+$ && "$LIMIT" =~ ^[0-9]+$ && "$LIMIT" -le 256 ]] || { echo "::error::offset and limit must be whole numbers, limit at most 256"; exit 1; }
+          [[ "$LIST" =~ ^lists/[A-Za-z0-9_.-]+\.json$ && -f "$LIST" ]] || { echo "::error::list must be a JSON file in lists/"; exit 1; }
+          echo "prs=$(jq -c --argjson o "$OFFSET" --argjson n "$LIMIT" '.[$o:$o+$n]' "$LIST")" >> "$GITHUB_OUTPUT"
+
+  parity:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        pr: ${{ fromJSON(needs.plan.outputs.prs) }}
+    name: ${{ matrix.pr.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          path: harness
+      - name: Build old and new
+        env:
+          PR_REPO: ${{ matrix.pr.repo }}
+          PR_OLD: ${{ matrix.pr.old_sha }}
+          PR_NEW: ${{ matrix.pr.head_sha }}
+          PR_KEY: ${{ matrix.pr.key }}
+        run: |
+          set -uo pipefail
+          [[ "$PR_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$PR_OLD" =~ ^[0-9a-f]{40}$ && "$PR_NEW" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad matrix entry"; exit 1; }
+          export HARNESS="$GITHUB_WORKSPACE/harness"
+          mkdir -p "$RUNNER_TEMP/out"
+          bash "$HARNESS/bin/parity.sh" "$PR_REPO" "$PR_OLD" "$PR_NEW" "$RUNNER_TEMP/out"
+          df -h / | tail -1
+      - name: Record a job that stopped early
+        if: always()
+        env:
+          PR_REPO: ${{ matrix.pr.repo }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          [ -f "$RUNNER_TEMP/out/result.json" ] || jq -n --arg repo "$PR_REPO" '{repo:$repo, verdict:"unverified", reason:"the job stopped before build parity finished"}' > "$RUNNER_TEMP/out/result.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: b-${{ matrix.pr.key }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30
