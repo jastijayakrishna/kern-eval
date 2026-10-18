@@ -93,6 +93,30 @@ pkg "$r" "node -e 0"; printf "lockfileVersion: '9.0'\n\nsettings:\n  autoInstall
 echo 1 > "$r/a.txt"; new=$(commit "$r" new)
 expect pnpmlock "$old" "$new" pass "old and new both build"
 
+plan_is() {
+  local name="$1" field="$2" want="$3" got
+  got=$(jq -r --arg f "$field" '[.steps[] | select(.name=="plan" and .side=="new")][0][$f]' "$T/runs/$name/result.json" 2>/dev/null)
+  if [ "$got" = "$want" ]; then echo "ok   $name: plan $field = $got"; else echo "FAIL $name: plan $field want $want, got $got"; FAIL=1; fi
+}
+
+lock9() {
+  printf "lockfileVersion: '9.0'\n\nsettings:\n  autoInstallPeers: true\n  excludeLinksFromLockfile: false\n\nimporters:\n\n  .: {}\n" > "$1/pnpm-lock.yaml"
+}
+
+make_repo pnpmci; r="$T/repos/pnpmci"; rm -f "$r/.nvmrc"
+pkg "$r" "node -e 0"; lock9 "$r"; printf 'allowBuilds:\n  esbuild: true\n' > "$r/pnpm-workspace.yaml"
+mkdir -p "$r/.github/workflows"; printf 'on: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pnpm/action-setup@v4\n        with: { version: 11 }\n      - uses: actions/setup-node@v4\n        with: { node-version: 22, cache: pnpm }\n      - run: pnpm install --frozen-lockfile\n' > "$r/.github/workflows/deploy.yml"
+old=$(commit "$r" old); echo 1 > "$r/a.txt"; new=$(commit "$r" new)
+expect pnpmci "$old" "$new" pass "old and new both build"
+plan_is pnpmci pm_version 11; plan_is pnpmci pm_source ci; plan_is pnpmci node_source ci
+
+make_repo pnpmnover; r="$T/repos/pnpmnover"; rm -f "$r/.nvmrc"
+pkg "$r" "node -e 0"; lock9 "$r"
+mkdir -p "$r/.github/workflows"; printf 'on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: pnpm/action-setup@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 20\n' > "$r/.github/workflows/ci.yml"
+old=$(commit "$r" old); echo 1 > "$r/a.txt"; new=$(commit "$r" new)
+expect pnpmnover "$old" "$new" pass "old and new both build"
+plan_is pnpmnover pm_version 10; plan_is pnpmnover pm_source lockfile; plan_is pnpmnover node 20; plan_is pnpmnover node_source ci
+
 make_repo leftover; r="$T/repos/leftover"
 pkg "$r" "node build.js"; echo 'console.log("ok")' > "$r/build.js"; old=$(commit "$r" old)
 echo 'require("child_process").spawn("sleep",["3001"],{stdio:"ignore"}).unref();console.log("spawned")' > "$r/build.js"; new=$(commit "$r" new)

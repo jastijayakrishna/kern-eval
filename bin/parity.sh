@@ -10,6 +10,7 @@ BUILD_SECS="${BUILD_SECS:-1200}"
 W="$RUNNER_TEMP/w"
 TOOLS="$RUNNER_TEMP/tools"
 BASE_PATH="$PATH"
+SYSTEM_NODE="$(command -v node)"
 LOGS="$OUT/logs"
 rm -rf "$W" && mkdir -p "$W" "$LOGS" "$TOOLS"
 START=$(date +%s)
@@ -66,16 +67,21 @@ use_node() {
 }
 
 plan_side() {
-  local dir="$1" pmf name ver lockv
-  NODE_MAJOR=$(SEMVER_PATH="$TOOLS/node_modules/semver" node "$HARNESS/bin/node-major.cjs" "$dir")
+  local dir="$1" pmf name ver lockv toolchain ci_pnpm
+  toolchain=$(SEMVER_PATH="$TOOLS/node_modules/semver" "$SYSTEM_NODE" "$HARNESS/bin/toolchain.cjs" "$dir")
+  NODE_MAJOR=$(jq -r .node <<< "$toolchain")
+  NODE_SOURCE=$(jq -r .node_source <<< "$toolchain")
+  ci_pnpm=$(jq -r '.ci_pnpm // empty' <<< "$toolchain")
   HAS_BUILD=$(jq -r 'if (.scripts.build // "") != "" then "1" else "0" end' "$dir/package.json" 2>/dev/null || echo 0)
   pmf=$(jq -r '.packageManager // empty' "$dir/package.json" 2>/dev/null)
   PM_SOURCE=lockfile
   if [ -n "$pmf" ]; then
     name="${pmf%%@*}"; ver="${pmf#*@}"; ver="${ver%%+*}"; PM_SOURCE=packageManager
+  elif [ -f "$dir/pnpm-lock.yaml" ] && [ -n "$ci_pnpm" ]; then
+    name=pnpm; ver="$ci_pnpm"; PM_SOURCE=ci
   elif [ -f "$dir/pnpm-lock.yaml" ]; then
     name=pnpm; lockv=$(grep -m1 -oE "^lockfileVersion: *'?[0-9.]+" "$dir/pnpm-lock.yaml" | grep -oE '[0-9.]+$')
-    case "$lockv" in 9*) ver=9 ;; 6*) ver=8 ;; 5.4*) ver=7 ;; 5*) ver=6 ;; *) ver=9 ;; esac
+    case "$lockv" in 9*) ver=10 ;; 6*) ver=8 ;; 5.4*) ver=7 ;; 5*) ver=6 ;; *) ver=10 ;; esac
   elif [ -f "$dir/yarn.lock" ]; then
     name=yarn; if grep -q '^__metadata:' "$dir/yarn.lock"; then ver=4; else ver=1; fi
   elif [ -f "$dir/bun.lockb" ] || [ -f "$dir/bun.lock" ]; then
@@ -102,8 +108,8 @@ plan_side() {
     *)
       PMRUN=(); INSTALL=() ;;
   esac
-  jq -nc --arg side "$2" --arg node "$NODE_MAJOR" --arg pm "$PM" --arg pmv "$PM_VERSION" --arg src "$PM_SOURCE" --arg build "$HAS_BUILD" \
-    '{side:$side, name:"plan", node:$node, pm:$pm, pm_version:$pmv, pm_source:$src, has_build:($build=="1")}' >> "$STEPS"
+  jq -nc --arg side "$2" --arg node "$NODE_MAJOR" --arg nsrc "$NODE_SOURCE" --arg pm "$PM" --arg pmv "$PM_VERSION" --arg src "$PM_SOURCE" --arg build "$HAS_BUILD" \
+    '{side:$side, name:"plan", node:$node, node_source:$nsrc, pm:$pm, pm_version:$pmv, pm_source:$src, has_build:($build=="1")}' >> "$STEPS"
 }
 
 install_side() {
