@@ -93,4 +93,10 @@ pkg "$r" "node -e 0"; printf "lockfileVersion: '9.0'\n\nsettings:\n  autoInstall
 echo 1 > "$r/a.txt"; new=$(commit "$r" new)
 expect pnpmlock "$old" "$new" pass "old and new both build"
 
+make_repo leftover; r="$T/repos/leftover"
+pkg "$r" "node build.js"; echo 'console.log("ok")' > "$r/build.js"; old=$(commit "$r" old)
+echo 'require("child_process").spawn("sleep",["3001"],{stdio:"ignore"}).unref();console.log("spawned")' > "$r/build.js"; new=$(commit "$r" new)
+expect leftover "$old" "$new" pass "old and new both build"
+if pgrep -f "sleep 3001" > /dev/null; then echo "FAIL leftover: a process the build started is still running"; pkill -f "sleep 3001"; FAIL=1; else echo "ok   leftover: nothing the build started is still running"; fi
+
 [ "$FAIL" = 0 ] && echo "selftest: all passed" || { echo "selftest: FAILED"; exit 1; }

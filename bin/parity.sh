@@ -36,9 +36,12 @@ finish() {
 step() {
   local side="$1" name="$2" secs="$3" dir="$4"
   shift 4
-  local log="$LOGS/$side-$name-$(date +%s%N).log" t0=$(date +%s) code
-  ( cd "$dir" && timeout --kill-after=30 "$secs" "$@" ) > "$log" 2>&1
+  local log="$LOGS/$side-$name-$(date +%s%N).log" t0=$(date +%s) code pid
+  ( cd "$dir" && exec setsid timeout --kill-after=30 "$secs" "$@" ) > "$log" 2>&1 < /dev/null &
+  pid=$!
+  wait "$pid"
   code=$?
+  pkill -9 -s "$pid" > /dev/null 2>&1 || true
   pkill -9 -f "$dir" > /dev/null 2>&1 || true
   if [ "$(stat -c %s "$log")" -gt 400000 ]; then { head -c 100000 "$log"; echo; echo "[... cut ...]"; tail -c 250000 "$log"; } > "$log.cut" && mv "$log.cut" "$log"; fi
   jq -nc --arg side "$side" --arg name "$name" --argjson code "$code" --argjson seconds "$(( $(date +%s) - t0 ))" --arg log "$(basename "$log")" \
