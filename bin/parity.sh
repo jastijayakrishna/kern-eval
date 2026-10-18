@@ -26,9 +26,9 @@ unset GITHUB_TOKEN GH_TOKEN ACTIONS_RUNTIME_TOKEN ACTIONS_ID_TOKEN_REQUEST_TOKEN
 finish() {
   local verdict="$1" reason="$2"
   jq -n --arg repo "$REPO" --arg old "$OLD" --arg new "$NEW" --arg verdict "$verdict" --arg reason "$reason" \
-    --arg manifest "${MANIFEST_CHANGED:-0}" --argjson seconds "$(( $(date +%s) - START ))" \
+    --arg manifest "${MANIFEST_CHANGED:-0}" --argjson seconds "$(( $(date +%s) - START ))" --arg image "${ImageOS:-}/${ImageVersion:-}" \
     --slurpfile steps "$STEPS" \
-    '{repo:$repo, old_sha:$old, head_sha:$new, verdict:$verdict, reason:$reason, manifest_changed:($manifest=="1"), seconds:$seconds, steps:$steps}' \
+    '{repo:$repo, old_sha:$old, head_sha:$new, verdict:$verdict, reason:$reason, manifest_changed:($manifest=="1"), seconds:$seconds, image:$image, steps:$steps}' \
     > "$OUT/result.json"
   echo "build parity: $verdict ($reason)"
   exit 0
